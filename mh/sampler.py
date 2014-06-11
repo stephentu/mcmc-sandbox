@@ -109,44 +109,50 @@ def main():
     diag_elems = [1.0, 0.1]
     cov  = np.dot(np.dot(Q, np.diag(diag_elems)), Q.T)
     covinv = np.dot(np.dot(Q, np.diag([1./x for x in diag_elems])), Q.T)
-    smoothing = 0.001
-    sigma2 = 0.5
-    propcov = sigma2*np.eye(2)
-
-    def lg_target_ppdf(x):
-        diff = x - mean
-        return -0.5 * np.dot(diff, np.dot(covinv, diff))
-
-    def lg_proposal_cond_ppdf(xt, x):
-        diff = x - xt
-        return -0.5 / sigma2 * np.dot(diff, diff)
-
-    proposal_cond_draw = lambda xt, rng: rng.multivariate_normal(mean=xt, cov=propcov)
-
+    smoothing = 1e-5
     n_samples = 50000
+    skip = 100
+    bins = np.linspace(0, 2, 100)
 
-    values, naccepts = sample(lg_target_ppdf, lg_proposal_cond_ppdf, proposal_cond_draw, n_samples * 2, np.zeros(2), np.random)
-    values = values[n_samples::5]
-
-    print 'accept ratio:', (naccepts/(2.*n_samples))
+    sigma2_props = [0.01, 0.1, 0.1, 10.0]
+    all_samples = []
+    for sigma2_prop in sigma2_props:
+        propcov = sigma2_prop*np.eye(2)
+        def lg_target_ppdf(x):
+            diff = x - mean
+            return -0.5 * np.dot(diff, np.dot(covinv, diff))
+        def lg_proposal_cond_ppdf(xt, x):
+            diff = x - xt
+            return -0.5 / sigma2_prop * np.dot(diff, diff)
+        proposal_cond_draw = lambda xt, rng: rng.multivariate_normal(mean=xt, cov=propcov)
+        samples, _ = sample(lg_target_ppdf, lg_proposal_cond_ppdf, proposal_cond_draw, n_samples, np.zeros(2), np.random)
+        all_samples.append(samples)
 
     # sample from actual distribution
     actual_samples = np.random.multivariate_normal(mean=mean, cov=cov, size=n_samples)
-
-    bins = np.linspace(0, 2, 1000)
-
-    # smooth the histograms
-    mh_hist = (hist2d(values, bins, bins) + smoothing).flatten()
     actual_hist = (hist2d(actual_samples, bins, bins) + smoothing).flatten()
-
-    mh_hist /= mh_hist.sum()
     actual_hist /= actual_hist.sum()
 
-    print kl(mh_hist, actual_hist, (bins[1]-bins[0])**2)
+    all_bufs = []
+    for j in xrange(len(sigma2_props)):
+        buf = []
+        for i in range(0, n_samples, skip)[skip:]:
+            effective_samples = all_samples[j][0:i:skip]
+            mh_hist = (hist2d(effective_samples, bins, bins) + smoothing).flatten()
+            mh_hist /= mh_hist.sum()
+            score = kl(mh_hist, actual_hist, (bins[1]-bins[0])**2)
+            buf.append((i+1, score))
+        all_bufs.append(buf)
 
-    plt.plot( values[:,0], values[:,1], 'rx' )
-    plt.plot( actual_samples[:,0], actual_samples[:,1], 'gx' )
+    for buf in all_bufs:
+        plt.plot([x[0] for x in buf], [x[1] for x in buf])
+    plt.xlabel('Iterations')
+    plt.ylabel('KL-divergence')
     plt.show()
+
+    #plt.plot( values[:,0], values[:,1], 'rx' )
+    #plt.plot( actual_samples[:,0], actual_samples[:,1], 'gx' )
+    #plt.show()
 
 if __name__ == '__main__':
     main()
