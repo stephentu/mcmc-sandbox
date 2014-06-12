@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import numpy as np
 import scipy as sp
+import scipy.misc
 import scipy.special
 import itertools as it
 import matplotlib.pylab as plt
@@ -38,7 +39,7 @@ def gibbs_beta_bernoulli(Y, K, alpha, beta, gamma, niters):
         sums[ci] += yi
         cnts[ci] += 1
 
-    history = np.zeros((niters, N))
+    history = np.zeros((niters, N), dtype=np.int64)
     for t in xrange(niters):
         for i, (yi, ci) in enumerate(zip(Y, assignments)):
             # remove from SS
@@ -96,7 +97,7 @@ def pr_joint(C, Y, K, alpha, beta, gamma):
     def fn1(nk, sum_yid):
         assert nk >= sum_yid
         return gammaln(sum_yid + beta) + gammaln(nk - sum_yid + gamma)
-    term3 = sum(sum(fn1(nk, yid) for yid in row) for nk, row in zip(nks, sums))
+    term3 = sum(sum(fn1(nk, sum_yid) for sum_yid in row) for nk, row in zip(nks, sums))
     lg_pYgC = -term1 - term2 + term3
 
     #print 'term1:', term1
@@ -135,6 +136,51 @@ def histify(history, K):
         hist[idmap[tuple(h)]] += 1.0
     return hist
 
+def posterior_predictive(C, Y, K, alpha, beta, gamma):
+    """
+    computes p(y | Y,C) for all possible 2^D possible values
+    """
+
+    N, D = Y.shape
+    assert C.shape[0] == N
+
+    nks = np.bincount(C, minlength=K)
+    sums = np.zeros((K, D))
+    for yi, ci in zip(Y, C):
+        sums[ci] += yi
+
+    def fn(yvalue):
+        def fn1(nk, sum_yid, yd):
+            assert nk >= sum_yid
+            theta = (alpha + sum_yid) / (alpha + beta + nk)
+            assert theta >= 0.0 and theta <= 1.0
+            return np.log(theta) if yd else np.log(1.-theta)
+        def fn2(nk, row):
+            assert len(yvalue) == row.shape[0]
+            term1 = np.log(nk + alpha/K) - np.log(N + alpha)
+            term2 = sum(fn1(nk, sum_yid, yd) for sum_yid, yd in zip(row, yvalue))
+            return term1 + term2
+        return sp.misc.logsumexp([fn2(nk, row) for nk, row in zip(nks, sums)])
+
+    yvalues = it.product([0, 1], repeat=D)
+    lg_pr_yvalue = map(fn, yvalues)
+    return np.exp(lg_pr_yvalue)
+
+    #def fn(yvalue):
+    #    def fn1(nk, sum_yid, yd):
+    #        assert nk >= sum_yid
+    #        theta = (alpha + sum_yid) / (alpha + beta + nk)
+    #        assert theta >= 0.0 and theta <= 1.0
+    #        return theta if yd else (1.-theta)
+    #    def fn2(nk, row):
+    #        assert len(yvalue) == row.shape[0]
+    #        term1 = (nk + alpha/K)/(N+alpha)
+    #        term2 = np.product([fn1(nk, sum_yid, yd) for sum_yid, yd in zip(row, yvalue)])
+    #        return term1 * term2
+    #    return np.sum([fn2(nk, row) for nk, row in zip(nks, sums)])
+    #yvalues = it.product([0, 1], repeat=D)
+    #return map(fn, yvalues)
+
 def main():
 
     # generate some data according to the beta-bernoulli model
@@ -145,7 +191,7 @@ def main():
     N = 5
     skip = 100
     smoothing = 1e-5
-    n_samples = 50000
+    niters = 50000
 
     pis = np.random.dirichlet( alpha/K * np.ones(K) )
     cis = np.array([discrete_sample(pis) for _ in xrange(N)])
@@ -159,16 +205,24 @@ def main():
         Y[i] = np.array([bernoulli(aks[cis[i], d]) for d in xrange(D)])
 
     actual = brute_force_posterior(Y, K, alpha, beta, gamma)
-    history = gibbs_beta_bernoulli(Y, K, alpha, beta, gamma, n_samples)
+    actual_posterior_predictive = posterior_predictive(cis, Y, K, alpha, beta, gamma)
+    assert almost_eq(actual_posterior_predictive.sum(), 1.0)
+
+    history = gibbs_beta_bernoulli(Y, K, alpha, beta, gamma, niters)
 
     def fn(i):
         hist = histify(history[:i:skip], K) + smoothing
         hist /= hist.sum()
         return kl(actual, hist)
 
-    iters = range(0, n_samples, skip)[1:]
-    kls = map(fn, iters)
-    plt.plot(iters, kls)
+    posterior_predictives = np.array([posterior_predictive(assignment, Y, K, alpha, beta, gamma) for assignment in history[::skip]])
+    def fn1(i):
+        posteriors = posterior_predictives[:(i+1)].mean(axis=0)
+        assert almost_eq(posteriors.sum(), 1.0)
+        return kl(actual_posterior_predictive, posteriors)
+    kls = map(fn1, xrange(posterior_predictives.shape[0]))
+
+    plt.plot(range(0, niters, skip)[1:], kls[1:])
     plt.xlabel('Iterations')
     plt.ylabel('KL-divergence')
     plt.show()
