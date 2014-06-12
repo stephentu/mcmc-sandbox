@@ -148,7 +148,6 @@ def main():
     n_samples = 50000
 
     pis = np.random.dirichlet( alpha/K * np.ones(K) )
-    print pis
     cis = np.array([discrete_sample(pis) for _ in xrange(N)])
     aks = np.random.beta(beta, gamma, size=(K, D))
 
