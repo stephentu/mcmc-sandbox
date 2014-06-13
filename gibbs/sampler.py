@@ -50,7 +50,7 @@ def gibbs_beta_bernoulli(Y, K, alpha, beta, gamma, niters):
             def fn(k):
                 lg_term1 = np.log( cnts[k] + alpha/K )
                 lg_term2 = np.log( N - 1 + alpha )
-                lg_term3 = D*np.log( beta + gamma + cnts[k] + 1 )
+                lg_term3 = D*np.log( beta + gamma + cnts[k] )
                 def fn1(tup):
                     d, yid = tup
                     if yid:
@@ -152,7 +152,7 @@ def posterior_predictive(C, Y, K, alpha, beta, gamma):
     def fn(yvalue):
         def fn1(nk, sum_yid, yd):
             assert nk >= sum_yid
-            theta = (alpha + sum_yid) / (alpha + beta + nk)
+            theta = (beta + sum_yid) / (beta + gamma + nk)
             assert theta >= 0.0 and theta <= 1.0
             return np.log(theta) if yd else np.log(1.-theta)
         def fn2(nk, row):
